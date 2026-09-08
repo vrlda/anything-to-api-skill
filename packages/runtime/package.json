@@ -1,11 +1,25 @@
 {
   "name": "@anything-to-api/runtime",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean --external @anything-to-api/schema" },
-  "dependencies": { "@anything-to-api/schema": "workspace:*", "ajv": "^8.17.1", "ws": "^8.18.3" },
-  "devDependencies": { "@types/ws": "^8.18.1" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @anything-to-api/schema"
+  },
+  "dependencies": {
+    "@anything-to-api/schema": "workspace:*",
+    "ajv": "^8.17.1",
+    "tldts": "^7.4.12",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
 }

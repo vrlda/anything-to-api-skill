@@ -1,14 +1,22 @@
 {
   "name": "@anything-to-api/discovery",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean --external @anything-to-api/schema --external @anything-to-api/browser-adapter" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @anything-to-api/schema --external @anything-to-api/browser-adapter"
+  },
   "dependencies": {
     "@anything-to-api/browser-adapter": "workspace:*",
     "@anything-to-api/schema": "workspace:*",
+    "tldts": "^7.4.12",
     "yaml": "^2.8.1"
   }
 }

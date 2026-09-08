@@ -4,6 +4,7 @@ set -euo pipefail
 REPOSITORY_URL="${ANYTHING_REPOSITORY_URL:-https://github.com/vrlda/anything-to-api-skill.git}"
 INSTALL_ROOT="${ANYTHING_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/anything-to-api}"
 PNPM_VERSION="11.20.0"
+ANYTHING_VERSION="${ANYTHING_VERSION:-v1.1.1}"
 
 command -v git >/dev/null || { echo "anything: git is required" >&2; exit 1; }
 command -v node >/dev/null || { echo "anything: Node.js 20+ is required" >&2; exit 1; }
@@ -12,12 +13,13 @@ if [ "$NODE_MAJOR" -lt 20 ]; then echo "anything: Node.js 20+ is required" >&2; 
 
 mkdir -p "$(dirname "$INSTALL_ROOT")"
 if [ -d "$INSTALL_ROOT/.git" ]; then
-  git -C "$INSTALL_ROOT" pull --ff-only
+  git -C "$INSTALL_ROOT" fetch --depth 1 origin "refs/tags/$ANYTHING_VERSION:refs/tags/$ANYTHING_VERSION"
+  git -C "$INSTALL_ROOT" checkout --detach "$ANYTHING_VERSION"
 elif [ -e "$INSTALL_ROOT" ]; then
   echo "anything: $INSTALL_ROOT exists but is not an Anything-to-API checkout" >&2
   exit 1
 else
-  git clone --depth 1 "$REPOSITORY_URL" "$INSTALL_ROOT"
+  git clone --branch "$ANYTHING_VERSION" --depth 1 "$REPOSITORY_URL" "$INSTALL_ROOT"
 fi
 
 cd "$INSTALL_ROOT"

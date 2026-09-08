@@ -143,7 +143,7 @@ export const siteSpecSchema = z.object({
   site: z.object({
     id: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
     name: z.string().min(1),
-    domains: z.array(z.string().min(1)).min(1),
+    domains: z.array(z.string().min(1).refine((value) => isHostname(value), "Expected a hostname without a path, port, or traversal segments")).min(1),
     aliases: z.array(z.string()).default([]),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -179,6 +179,11 @@ export const siteSpecSchema = z.object({
     notes: z.string().optional(),
   }),
 });
+
+function isHostname(value: string): boolean {
+  if (value !== value.trim() || value.includes("..") || /[\\/@?#]/.test(value)) return false;
+  try { return new URL(`http://${value}`).hostname === value.toLowerCase().replace(/\.$/, ""); } catch { return false; }
+}
 
 export const siteSpecJsonSchema = z.toJSONSchema(siteSpecSchema, { target: "draft-7" });
 

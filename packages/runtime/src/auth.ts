@@ -3,6 +3,8 @@ import type { SiteSpec } from "@anything-to-api/schema";
 export interface AuthContext {
   values?: Record<string, unknown>;
   headers?: Record<string, string>;
+  /** Return credentials scoped to one validated destination. */
+  headersForUrl?: (url: URL) => Record<string, string> | Promise<Record<string, string>>;
 }
 
 export interface AuthProvider {

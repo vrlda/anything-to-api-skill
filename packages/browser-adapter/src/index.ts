@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { CommandSpec, SiteSpec } from "@anything-to-api/schema";
 import type { AuthContext, AuthProvider, BrowserExecutor, CallOptions, CallResult } from "@anything-to-api/runtime";
-import { AnythingError, resolveTemplates } from "@anything-to-api/runtime";
+import { AnythingError, assertSafeDestination, isUrlAllowed, resolveTemplates } from "@anything-to-api/runtime";
 import { chromium, type BrowserContext, type Page, type Request, type Response } from "playwright";
 export type { Page } from "playwright";
 export function chromiumExecutablePath(): string { return chromium.executablePath(); }
@@ -48,7 +48,7 @@ function scrub(value: unknown): unknown {
 export class NetworkRecorder {
   private readonly entries = new Map<Request, CaptureEntry>();
   private readonly pending = new Set<Promise<void>>();
-  constructor(private readonly maxBodyBytes = 64_000) {}
+  constructor(private readonly maxBodyBytes = 0) {}
 
   attach(page: Page): () => void {
     const request = (value: Request) => this.onRequest(value);
@@ -73,7 +73,7 @@ export class NetworkRecorder {
     if (!entry) return;
     const type = response.headers()["content-type"];
     let bodySample: string | undefined;
-    if (type && /(json|text|javascript|xml|graphql)/i.test(type)) {
+    if (this.maxBodyBytes > 0 && type && /(json|text|javascript|xml|graphql)/i.test(type)) {
       try {
         const sample = (await response.body()).subarray(0, this.maxBodyBytes).toString("utf8");
         bodySample = /json/i.test(type) ? redactPayload(sample) : sample;
@@ -95,9 +95,9 @@ export class BrowserSessionAuthProvider implements AuthProvider {
   readonly id: string;
   constructor(private readonly options: BrowserSessionOptions) { this.id = options.id ?? "browser-session"; }
   async getAuth(site: SiteSpec): Promise<AuthContext> {
-    const state = JSON.parse(await readFile(this.options.storageStatePath, "utf8")) as { cookies?: Array<{ name: string; value: string; domain: string }>; origins?: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }> };
+    const state = JSON.parse(await readFile(this.options.storageStatePath, "utf8")) as { cookies?: Array<{ name: string; value: string; domain: string; path?: string; secure?: boolean; expires?: number }>; origins?: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }> };
     const domains = new Set(site.site.domains.map((domain) => domain.replace(/^\./, "")));
-    const cookies = (state.cookies ?? []).filter((cookie) => [...domains].some((domain) => cookie.domain.replace(/^\./, "").endsWith(domain)));
+    const cookies = (state.cookies ?? []).filter((cookie) => [...domains].some((domain) => domainMatches(cookie.domain, domain)));
     const values: Record<string, unknown> = {};
     const csrf = this.options.csrf;
     if (csrf?.cookie) values[csrf.valueName ?? "csrf_token"] = cookies.find((cookie) => cookie.name === csrf.cookie)?.value;
@@ -105,7 +105,13 @@ export class BrowserSessionAuthProvider implements AuthProvider {
       const item = (state.origins ?? []).flatMap((origin) => origin.localStorage).find((value) => value.name === csrf.localStorage);
       values[csrf.valueName ?? "csrf_token"] = item?.value;
     }
-    return { headers: cookies.length ? { cookie: cookies.map(({ name, value }) => `${name}=${value}`).join("; ") } : {}, values };
+    const headersForUrl = (url: URL): Record<string, string> => {
+      const now = Date.now() / 1000;
+      const scoped = cookies.filter((cookie) => domainMatches(url.hostname, cookie.domain) && (!cookie.path || url.pathname.startsWith(cookie.path)) && (!cookie.secure || url.protocol === "https:") && (!cookie.expires || cookie.expires < 0 || cookie.expires > now));
+      return scoped.length ? { cookie: scoped.map(({ name, value }) => `${name}=${value}`).join("; ") } : {} as Record<string, string>;
+    };
+    const primary = headersForUrl(new URL(`https://${site.site.domains[0]!}/`));
+    return { headers: primary, headersForUrl, values };
   }
 }
 
@@ -113,7 +119,8 @@ export class BrowserSessionDirectoryAuthProvider implements AuthProvider {
   readonly id = "browser-session";
   constructor(private readonly directory: string) {}
   async getAuth(site: SiteSpec): Promise<AuthContext> {
-    return new BrowserSessionAuthProvider({ storageStatePath: resolve(this.directory, `${site.site.domains[0]}.json`) }).getAuth(site);
+    const filename = `${encodeURIComponent(site.site.domains[0]!)}.json`;
+    return new BrowserSessionAuthProvider({ storageStatePath: resolve(this.directory, filename) }).getAuth(site);
   }
 }
 
@@ -133,19 +140,30 @@ export async function executeBrowserInstructions(page: Page, instructions: strin
 export interface PlaywrightBrowserExecutorOptions extends LaunchSessionOptions { page?: Page; keepOpen?: boolean; }
 export class PlaywrightBrowserExecutor implements BrowserExecutor {
   constructor(private readonly options: PlaywrightBrowserExecutorOptions = {}) {}
-  async execute<T>(site: SiteSpec, commandName: string, command: CommandSpec, args: Record<string, unknown>, auth: AuthContext, steps: Record<string, unknown>, _options: CallOptions): Promise<CallResult<T>> {
+  async execute<T>(site: SiteSpec, commandName: string, command: CommandSpec, args: Record<string, unknown>, auth: AuthContext, steps: Record<string, unknown>, callOptions: CallOptions): Promise<CallResult<T>> {
     if (command.request.kind !== "browser") throw new AnythingError("Expected browser command", "INVALID_BROWSER_COMMAND");
     const started = Date.now();
     const owned = this.options.page ? undefined : await launchSession(this.options);
     const page = this.options.page ?? owned!.page;
     const output: Record<string, unknown> = {};
     try {
-      if (auth.headers) await page.context().setExtraHTTPHeaders(auth.headers);
-      if (command.request.startUrl) await page.goto(new URL(resolveTemplates(command.request.startUrl, { args, auth: auth.values ?? {}, steps }), site.baseUrls.default).href);
+      if (typeof page.route === "function") await page.route("**/*", async (route) => {
+        const url = new URL(route.request().url());
+        if (!isUrlAllowed(site, url)) {
+          const type = route.request().resourceType();
+          return ["document", "fetch", "xhr", "websocket"].includes(type) ? route.abort("blockedbyclient") : route.continue();
+        }
+        const scoped = auth.headersForUrl ? await auth.headersForUrl(url) : auth.headers ?? {};
+        await route.continue({ headers: { ...route.request().headers(), ...scoped } });
+      });
+      if (command.request.startUrl) {
+        const url = new URL(resolveTemplates(command.request.startUrl, { args, auth: auth.values ?? {}, steps }), site.baseUrls.default);
+        assertSafeDestination(site, url); await page.goto(url.href);
+      }
       if (!command.request.steps) return executeBrowserInstructions(page, command.request.instructions!);
       const actions = resolveTemplates(command.request.steps, { args, auth: auth.values ?? {}, steps });
       for (const step of actions) {
-        if (step.action === "goto") await page.goto(new URL(step.url, site.baseUrls.default).href);
+        if (step.action === "goto") { const url = new URL(step.url, site.baseUrls.default); assertSafeDestination(site, url); await page.goto(url.href); }
         else if (step.action === "click") await page.locator(step.selector).click();
         else if (step.action === "fill") await page.locator(step.selector).fill(step.value);
         else if (step.action === "select") await page.locator(step.selector).selectOption(step.value);
@@ -156,10 +174,17 @@ export class PlaywrightBrowserExecutor implements BrowserExecutor {
           output[step.as] = step.property === "text" ? await locator.textContent() : step.property === "value" ? await locator.inputValue() : await locator.getAttribute(step.attribute ?? "value");
         } else if (step.action === "download") {
           const [download] = await Promise.all([page.waitForEvent("download"), page.locator(step.selector).click()]);
-          const path = resolve(step.path); await download.saveAs(path); output.path = path;
+          if (!callOptions.outputPath) throw new AnythingError("Browser downloads require the caller to provide outputPath", "UNSAFE_FILE_ACCESS");
+          const path = resolve(callOptions.outputPath); await download.saveAs(path); output.path = path;
         }
       }
       return { data: output as T, extracted: output, metadata: { command: commandName, site: site.site.id, status: 200, durationMs: Date.now() - started, attempts: 1, pages: 1 } };
     } finally { if (owned && !this.options.keepOpen) await owned.close(); }
   }
+}
+
+function domainMatches(hostname: string, domain: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\./, "").replace(/\.$/, "");
+  const expected = domain.toLowerCase().replace(/^\./, "").replace(/\.$/, "");
+  return host === expected || host.endsWith(`.${expected}`);
 }

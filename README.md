@@ -9,7 +9,7 @@ An agent explores the UI, observes the underlying requests, validates reusable o
 Requires Node.js 20+, Git, and macOS or Linux. One line:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vrlda/anything-to-api-skill/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vrlda/anything-to-api-skill/v1.1.1/install.sh | bash
 ```
 
 Or tell a capable coding agent:

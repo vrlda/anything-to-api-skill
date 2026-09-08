@@ -90,6 +90,9 @@ importers:
       '@anything-to-api/schema':
         specifier: workspace:*
         version: link:../schema
+      tldts:
+        specifier: ^7.4.12
+        version: 7.4.12
       yaml:
         specifier: ^2.8.1
         version: 2.9.0
@@ -135,6 +138,9 @@ importers:
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
+      tldts:
+        specifier: ^7.4.12
+        version: 7.4.12
       ws:
         specifier: ^8.18.3
         version: 8.21.3
@@ -1241,6 +1247,13 @@ packages:
   tinyglobby@0.2.17:
     resolution: {integrity: sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==}
     engines: {node: '>=12.0.0'}
+
+  tldts-core@7.4.12:
+    resolution: {integrity: sha512-nYNzS2WRf4QJmjzFFgAxLOBjyBxAGRbCy9PVBPaglcYyYajh40VBn+v5Ngr96ZMc7oM0+aCJdtQnNejvdBnXMQ==}
+
+  tldts@7.4.12:
+    resolution: {integrity: sha512-WylhSDKVeYnWXL3a+vKTaOxjnOeEGw938hImY8zoRWJjRRK/Jp1K+IihBzIONpUmW4e3WmXT6q5FW6vlESVZCA==}
+    hasBin: true
 
   toidentifier@1.0.1:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
@@ -2356,6 +2369,12 @@ snapshots:
     dependencies:
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
+
+  tldts-core@7.4.12: {}
+
+  tldts@7.4.12:
+    dependencies:
+      tldts-core: 7.4.12
 
   toidentifier@1.0.1: {}
 

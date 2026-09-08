@@ -4,7 +4,7 @@ description: Learn, validate, execute, or repair reusable website commands when 
 license: MIT
 metadata:
   author: vrlda
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Anything-to-API

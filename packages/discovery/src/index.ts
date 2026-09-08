@@ -1,8 +1,9 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
 import { loadSiteSpec, parseSiteSpec, type JsonValue, type SiteSpec } from "@anything-to-api/schema";
 import { launchSession, NetworkRecorder, type CaptureEntry, type LaunchSessionOptions, type Page } from "@anything-to-api/browser-adapter";
+import { getDomain } from "tldts";
 
 export interface DiscoveryOptions extends LaunchSessionOptions { outputRoot: string; waitForDone: (page: Page) => Promise<void>; }
 export interface DiscoveryResult { spec: SiteSpec; captures: CaptureEntry[]; siteDirectory: string; }
@@ -24,10 +25,11 @@ export async function discoverWebsite(rawUrl: string, options: DiscoveryOptions)
     const existing = await access(sitePath).then(() => loadSiteSpec(sitePath), () => undefined);
     const spec = existing ? mergeSiteSpecs(existing, candidate) : candidate;
     await writeFile(sitePath, YAML.stringify(spec), { mode: 0o600 });
-    await writeFile(join(siteDirectory, "_capture.json"), JSON.stringify(captures, null, 2), { mode: 0o600 });
+    await writeFile(join(siteDirectory, "_capture.json"), JSON.stringify(captures.map(sanitizeCaptureForDisk), null, 2), { mode: 0o600 });
     if (options.storageStatePath) {
       await mkdir(dirname(options.storageStatePath), { recursive: true, mode: 0o700 });
       await session.context.storageState({ path: options.storageStatePath });
+      await chmod(options.storageStatePath, 0o600);
     }
     return { spec, captures, siteDirectory };
   } finally { detach(); await session.close(); }
@@ -51,6 +53,7 @@ export function mergeSiteSpecs(existing: SiteSpec, candidate: SiteSpec): SiteSpe
 
 export function inferCandidateSpec(source: URL, captures: CaptureEntry[], now = new Date()): SiteSpec {
   const commands: Record<string, unknown> = {};
+  const authRequirements = new Set<string>(["cookies"]);
   const candidates = captures.filter((entry) => isApplicationRequest(source, entry) && entry.response && entry.response.status < 500);
   for (const [index, entry] of candidates.entries()) {
     const parsed = new URL(entry.request.url);
@@ -66,8 +69,7 @@ export function inferCandidateSpec(source: URL, captures: CaptureEntry[], now = 
     let request: Record<string, unknown>;
     if (graphql) {
       const variables = Object.fromEntries(Object.entries((graphql.variables as Record<string, JsonValue> | undefined) ?? {}).map(([key, value]) => {
-        argumentsSpec[key] = inferArgument(value);
-        return [key, `{{args.${key}}}`];
+        return [key, parameterizeValue(key, value, argumentsSpec, authRequirements)];
       }));
       request = { kind: "graphql", url: parsed.pathname, query: graphql.query, operationName: graphql.operationName, variables };
     } else {
@@ -75,8 +77,8 @@ export function inferCandidateSpec(source: URL, captures: CaptureEntry[], now = 
       request = { kind: "http", method: entry.request.method, url: templatedPath };
       if (Object.keys(query).length) request.query = query;
       if (entry.request.postData) {
-        if (parsedBody !== undefined) request.body = parsedBody;
-        else request.form = Object.fromEntries(new URLSearchParams(entry.request.postData));
+        if (parsedBody !== undefined) request.body = parameterizeBody(parsedBody, argumentsSpec, authRequirements);
+        else request.form = Object.fromEntries([...new URLSearchParams(entry.request.postData)].map(([key, value]) => [key, parameterizeValue(key, value, argumentsSpec, authRequirements)]));
       }
     }
     commands[name] = {
@@ -91,7 +93,7 @@ export function inferCandidateSpec(source: URL, captures: CaptureEntry[], now = 
   return parseSiteSpec({
     specVersion: "1.0",
     site: { id: source.hostname.replace(/^www\./, "").replace(/[^a-z0-9.-]/g, "-"), name: source.hostname, domains: [source.hostname], aliases: [], createdAt: now.toISOString(), updatedAt: now.toISOString() },
-    baseUrls: { default: source.origin }, auth: { required: true, provider: "browser-session", requirements: ["cookies"] }, commands,
+    baseUrls: { default: source.origin }, auth: { required: true, provider: "browser-session", requirements: [...authRequirements] }, commands,
     discovery: { sourceUrl: source.href, learnedAt: now.toISOString(), agent: "anything-to-api discovery recorder", notes: "Candidates require agent review, secret classification, parameterization, and replay." },
   });
 }
@@ -121,9 +123,38 @@ function snakeCase(value: string): string { return value.replace(/([a-z0-9])([A-
 
 function isApplicationRequest(source: URL, entry: CaptureEntry): boolean {
   const url = new URL(entry.request.url);
-  if (!url.hostname.endsWith(source.hostname.split(".").slice(-2).join("."))) return false;
+  if (!domainRelated(url.hostname, source.hostname)) return false;
   if (["image", "font", "stylesheet", "media"].includes(entry.request.resourceType)) return false;
   return /^(fetch|xhr|document|websocket)$/.test(entry.request.resourceType) && !/(analytics|telemetry|metrics|collect|sentry)/i.test(url.pathname);
+}
+
+function domainRelated(left: string, right: string): boolean {
+  const a = left.toLowerCase().replace(/\.$/, ""); const b = right.toLowerCase().replace(/\.$/, "");
+  const aDomain = getDomain(a, { allowPrivateDomains: true }); const bDomain = getDomain(b, { allowPrivateDomains: true });
+  return a === b || (!!aDomain && aDomain === bDomain);
+}
+
+function parameterizeBody(value: unknown, argumentsSpec: Record<string, unknown>, authRequirements: Set<string>, path: string[] = []): JsonValue {
+  if (Array.isArray(value)) return value.map((item, index) => parameterizeBody(item, argumentsSpec, authRequirements, [...path, String(index)]));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, parameterizeBody(item, argumentsSpec, authRequirements, [...path, key])])) as JsonValue;
+  return parameterizeValue(path.at(-1) ?? "value", value, argumentsSpec, authRequirements, path);
+}
+
+function parameterizeValue(key: string, value: unknown, argumentsSpec: Record<string, unknown>, authRequirements: Set<string>, path: string[] = [key]): JsonValue {
+  let name = snakeCase(path.filter((part) => !/^\d+$/.test(part)).join("_")) || "value";
+  if (value === "{{redacted}}" || /(pass(word)?|secret|token|authorization|cookie|csrf|api[-_]?key|signature|session)/i.test(key)) {
+    authRequirements.add(name); return `{{auth.${name}}}`;
+  }
+  let suffix = 2; const base = name;
+  while (name in argumentsSpec) name = `${base}_${suffix++}`;
+  argumentsSpec[name] = inferArgument(value);
+  return `{{args.${name}}}`;
+}
+
+function sanitizeCaptureForDisk(entry: CaptureEntry): CaptureEntry {
+  const url = new URL(entry.request.url);
+  for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, "{{redacted}}");
+  return { ...entry, request: { ...entry.request, url: url.href, postData: undefined }, response: entry.response ? { ...entry.response, bodySample: undefined } : undefined };
 }
 
 function semanticName(method: string, path: string): string {

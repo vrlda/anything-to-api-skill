@@ -25,4 +25,6 @@ it("loads domain-scoped browser cookies without persisting them in specs", async
   const provider = new BrowserSessionAuthProvider({ storageStatePath: path });
   const auth = await provider.getAuth({ site: { domains: ["example.com"] } } as never);
   expect(auth.headers?.cookie).toBe("session=secret");
+  expect(await auth.headersForUrl?.(new URL("https://notexample.com/"))).toEqual({});
+  expect(await auth.headersForUrl?.(new URL("https://api.example.com/"))).toEqual({ cookie: "session=secret" });
 });

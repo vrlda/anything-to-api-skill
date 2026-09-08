@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { CommandSpec, SiteSpec } from "@anything-to-api/schema";
 import { Ajv } from "ajv";
+import { getDomain } from "tldts";
 import type { AuthContext, AuthProvider } from "./auth.js";
 import { NoAuthProvider } from "./auth.js";
 import { AnythingError, GraphqlError, HttpError, ResponseValidationError } from "./errors.js";
@@ -21,6 +22,8 @@ export interface AnythingOptions extends RegistryOptions {
   fetch?: typeof globalThis.fetch;
   authorize?: (site: SiteSpec, command: string, sideEffect: CommandSpec["sideEffect"]) => boolean | Promise<boolean>;
   browserExecutor?: BrowserExecutor;
+  allowedOrigins?: string[];
+  allowPrivateNetwork?: boolean;
 }
 export interface BrowserExecutor { execute<T>(site: SiteSpec, command: string, spec: CommandSpec, args: Record<string, unknown>, auth: AuthContext, steps: Record<string, unknown>, options: CallOptions): Promise<CallResult<T>>; }
 export interface CallOptions { outputPath?: string; signal?: AbortSignal; }
@@ -33,12 +36,16 @@ export class Anything {
   private readonly fetcher: typeof globalThis.fetch;
   private readonly authorize?: AnythingOptions["authorize"];
   private readonly browserExecutor?: BrowserExecutor;
+  private readonly allowedOrigins: Set<string>;
+  private readonly allowPrivateNetwork: boolean;
 
   constructor(options: AnythingOptions = {}) {
     this.registry = options.registry ?? new SiteRegistry(options);
     this.fetcher = options.fetch ?? globalThis.fetch;
     this.authorize = options.authorize;
     this.browserExecutor = options.browserExecutor;
+    this.allowedOrigins = new Set((options.allowedOrigins ?? []).map((value) => new URL(value).origin));
+    this.allowPrivateNetwork = options.allowPrivateNetwork ?? false;
     this.registerAuthProvider(new NoAuthProvider());
     for (const provider of options.authProviders ?? []) this.registerAuthProvider(provider);
   }
@@ -69,7 +76,8 @@ export class Anything {
   private async runWithPrerequisites<T>(spec: SiteSpec, commandName: string, args: Record<string, unknown>, auth: AuthContext, options: CallOptions, stack: string[]): Promise<CallResult<T>> {
     if (stack.includes(commandName)) throw new AnythingError(`Command dependency cycle: ${[...stack, commandName].join(" -> ")}`, "DEPENDENCY_CYCLE", { stack: [...stack, commandName] });
     const command = this.getCommand(spec, commandName);
-    if (this.authorize && !await this.authorize(spec, commandName, command.sideEffect)) throw new AnythingError(`Execution denied for ${commandName} (${command.sideEffect})`, "EXECUTION_DENIED", { site: spec.site.id, command: commandName, sideEffect: command.sideEffect });
+    const sideEffect = effectiveSideEffect(command);
+    if (this.authorize && !await this.authorize(spec, commandName, sideEffect)) throw new AnythingError(`Execution denied for ${commandName} (${sideEffect})`, "EXECUTION_DENIED", { site: spec.site.id, command: commandName, sideEffect });
     const steps: Record<string, unknown> = {};
     for (const prerequisite of command.prerequisites ?? []) {
       const prerequisiteArgs = resolveTemplates(prerequisite.arguments ?? {}, { args, auth: auth.values ?? {}, steps });
@@ -91,9 +99,11 @@ export class Anything {
       return this.browserExecutor.execute<T>(spec, name, command, args, auth, steps, options);
     }
     const started = Date.now();
-    const context = { args, auth: auth.values ?? {}, steps, env: process.env, runtime: { now: new Date().toISOString(), uuid: crypto.randomUUID() } };
+    const context = { args, auth: auth.values ?? {}, steps, runtime: { now: new Date().toISOString(), uuid: crypto.randomUUID() } };
     if (command.request.kind === "websocket") {
-      const result = await executeWebSocket(spec, { ...command.request, headers: { ...auth.headers, ...command.request.headers } }, context);
+      const socketUrl = new URL(resolveTemplates(command.request.url, context), spec.baseUrls.default);
+      assertSafeDestination(spec, socketUrl, this.allowedOrigins, this.allowPrivateNetwork);
+      const result = await executeWebSocket(spec, { ...command.request, url: socketUrl.href, headers: { ...await authHeaders(auth, socketUrl), ...command.request.headers } }, context);
       const data = result.data as T;
       validateResponse(name, command, data);
       return { data, extracted: extractBody(command, data), metadata: { command: name, site: spec.site.id, status: result.status, durationMs: Date.now() - started, attempts: 1, pages: 1 } };
@@ -113,14 +123,15 @@ export class Anything {
         query: {}, body: { query: resolved.query, variables: resolved.variables, ...(resolved.operationName ? { operationName: resolved.operationName } : {}) }, timeoutMs: resolved.timeoutMs,
       } : resolved;
       const url = new URL(request.url, spec.baseUrls.default);
+      assertSafeDestination(spec, url, this.allowedOrigins, this.allowPrivateNetwork);
       for (const [key, value] of Object.entries(request.query ?? {})) if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
       if (cursor !== undefined && command.pagination) url.searchParams.set(command.pagination.cursorQuery, String(cursor));
-      const headers = new Headers({ ...auth.headers, ...request.headers });
+      const headers = new Headers({ ...await authHeaders(auth, url), ...request.headers });
       if (request.contentType) headers.set("content-type", request.contentType);
-      const body = await buildBody(request, headers);
+      const body = await buildBody(request, headers, command, command.request.kind === "http" ? command.request : undefined);
       const timeoutSignal = request.timeoutMs ? AbortSignal.timeout(request.timeoutMs) : undefined;
       const signal = options.signal && timeoutSignal ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal ?? timeoutSignal;
-      const response = await retryFetch(this.fetcher, url, { method: request.method, headers, body, signal }, command.retry, (count) => { attempts += count; });
+      const response = await retryFetch(this.fetcher, url, { method: request.method, headers, body, signal }, command.retry, (count) => { attempts += count; }, (next) => assertSafeDestination(spec, next, this.allowedOrigins, this.allowPrivateNetwork));
       lastStatus = response.status;
       lastHeaders = response.headers;
       lastData = await readResponse(response, command.output.type);
@@ -151,12 +162,16 @@ function extractBody(command: CommandSpec, data: unknown): Record<string, unknow
   return Object.fromEntries((command.extract ?? []).filter((rule) => rule.from === "body").map((rule) => [rule.name, getPath(data, rule.path ?? "")]));
 }
 
-async function buildBody(request: Extract<CommandSpec["request"], { kind: "http" }>, headers: Headers): Promise<BodyInit | undefined> {
+async function buildBody(request: Extract<CommandSpec["request"], { kind: "http" }>, headers: Headers, command: CommandSpec, sourceRequest?: Extract<CommandSpec["request"], { kind: "http" }>): Promise<BodyInit | undefined> {
   if (request.multipart) {
     const form = new FormData();
     for (const [name, value] of Object.entries(request.multipart)) {
       if (value && typeof value === "object" && !Array.isArray(value) && "file" in value && typeof value.file === "string") {
         const descriptor = value as { file: string; filename?: string; contentType?: string };
+        const raw = sourceRequest?.multipart?.[name];
+        const rawFile = raw && typeof raw === "object" && !Array.isArray(raw) && "file" in raw ? String(raw.file) : "";
+        const match = /^\{\{args\.([a-zA-Z0-9_]+)\}\}$/.exec(rawFile);
+        if (!match || command.arguments[match[1]!]?.type !== "file") throw new AnythingError("Multipart files must come directly from a declared file argument", "UNSAFE_FILE_ACCESS");
         const bytes = await readFile(descriptor.file);
         form.append(name, new Blob([bytes], { type: descriptor.contentType }), descriptor.filename);
       } else form.append(name, typeof value === "string" ? value : JSON.stringify(value));
@@ -197,12 +212,23 @@ function validateArguments(command: CommandSpec, args: Record<string, unknown>):
   return result;
 }
 
-async function retryFetch(fetcher: typeof fetch, url: URL, init: RequestInit, retry: CommandSpec["retry"], report: (attempts: number) => void): Promise<Response> {
+async function retryFetch(fetcher: typeof fetch, url: URL, init: RequestInit, retry: CommandSpec["retry"], report: (attempts: number) => void, validateRedirect: (url: URL) => void): Promise<Response> {
   const max = retry?.attempts ?? 1;
   let response!: Response;
   for (let attempt = 1; attempt <= max; attempt++) {
     report(1);
-    response = await fetcher(url, init);
+    let current = url;
+    let currentInit = { ...init, redirect: "manual" as const };
+    for (let redirects = 0; ; redirects++) {
+      response = await fetcher(current, currentInit);
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      if (!location) break;
+      if (redirects >= 9) throw new AnythingError("Too many redirects", "UNSAFE_REDIRECT");
+      current = new URL(location, current);
+      validateRedirect(current);
+      if (response.status === 303 || ((response.status === 301 || response.status === 302) && currentInit.method === "POST")) currentInit = { ...currentInit, method: "GET", body: undefined };
+    }
     if (!retry?.statuses.includes(response.status) || attempt === max) return response;
     const retryAfter = response.headers.get("retry-after");
     const serverDelay = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : undefined;
@@ -210,6 +236,39 @@ async function retryFetch(fetcher: typeof fetch, url: URL, init: RequestInit, re
     await new Promise((done) => setTimeout(done, delay));
   }
   return response;
+}
+
+async function authHeaders(auth: AuthContext, url: URL): Promise<Record<string, string>> {
+  return auth.headersForUrl ? await auth.headersForUrl(url) : auth.headers ?? {};
+}
+
+export function isUrlAllowed(site: SiteSpec, destination: URL, allowedOrigins: ReadonlySet<string> = new Set(), allowPrivateNetwork = false): boolean {
+  const protocol = destination.protocol;
+  if (!["http:", "https:", "ws:", "wss:"].includes(protocol)) return false;
+  const source = new URL(site.discovery.sourceUrl);
+  const sourceHost = normalizeHost(source.hostname);
+  const host = normalizeHost(destination.hostname);
+  if (!allowPrivateNetwork && isPrivateHost(host) && !isPrivateHost(sourceHost)) return false;
+  const comparableOrigin = `${protocol === "ws:" ? "http:" : protocol === "wss:" ? "https:" : protocol}//${destination.host}`;
+  if (allowedOrigins.has(destination.origin) || allowedOrigins.has(comparableOrigin)) return true;
+  const domain = getDomain(host, { allowPrivateDomains: true });
+  const sourceDomain = getDomain(sourceHost, { allowPrivateDomains: true });
+  return host === sourceHost || (isLoopback(host) && isLoopback(sourceHost)) || (!!domain && domain === sourceDomain);
+}
+
+export function assertSafeDestination(site: SiteSpec, destination: URL, allowedOrigins: ReadonlySet<string> = new Set(), allowPrivateNetwork = false): void {
+  if (!isUrlAllowed(site, destination, allowedOrigins, allowPrivateNetwork)) throw new AnythingError(`Destination is outside the learned site's trust boundary: ${destination.origin}`, "UNSAFE_DESTINATION", { destination: destination.origin, source: site.discovery.sourceUrl });
+}
+
+function normalizeHost(host: string): string { return host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, ""); }
+function isLoopback(host: string): boolean { return host === "localhost" || host === "::1" || host.startsWith("127."); }
+function isPrivateHost(host: string): boolean {
+  return isLoopback(host) || host === "0.0.0.0" || host.startsWith("10.") || host.startsWith("192.168.") || host.startsWith("169.254.") || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^f[cd][0-9a-f]{2}:/i.test(host) || /^fe[89ab][0-9a-f]:/i.test(host);
+}
+
+function effectiveSideEffect(command: CommandSpec): CommandSpec["sideEffect"] {
+  const transportWrites = (command.request.kind === "graphql" && /^\s*mutation\b/i.test(command.request.query)) || command.request.kind === "websocket" || (command.request.kind === "http" && !["GET", "HEAD"].includes(command.request.method)) || (command.request.kind === "browser" && (command.request.instructions !== undefined || command.request.steps?.some((step) => !["goto", "wait", "extract"].includes(step.action))));
+  return command.sideEffect === "read" && transportWrites ? "write" : command.sideEffect;
 }
 
 async function readResponse(response: Response, type: CommandSpec["output"]["type"]): Promise<unknown> {

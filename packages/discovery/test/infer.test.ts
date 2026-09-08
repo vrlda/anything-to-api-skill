@@ -30,3 +30,10 @@ it("drops analytics and cross-site requests", () => {
   const spec = inferCandidateSpec(new URL("https://example.com"), [{ id: "x", startedAt: "2026-09-08T00:00:00.000Z", request: { method: "POST", url: "https://metrics.other.com/collect", resourceType: "fetch", headers: {} }, response: { status: 204, headers: {} } }]);
   expect(spec.commands).toEqual({});
 });
+
+it("parameterizes captured request bodies without persisting observed values", () => {
+  const spec = inferCandidateSpec(new URL("https://example.com"), [{ id: "p", startedAt: "2026-09-08T00:00:00.000Z", request: { method: "POST", url: "https://example.com/profile", resourceType: "fetch", headers: {}, postData: JSON.stringify({ name: "Ada", password: "{{redacted}}" }) }, response: { status: 200, headers: {}, contentType: "application/json" } }]);
+  expect(spec.commands.create_profile?.request).toHaveProperty("body.name", "{{args.name}}");
+  expect(spec.commands.create_profile?.request).toHaveProperty("body.password", "{{auth.password}}");
+  expect(JSON.stringify(spec)).not.toContain("Ada");
+});
