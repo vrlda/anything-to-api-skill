@@ -1,0 +1,62 @@
+specVersion: "1.0"
+site:
+  id: demo
+  name: Anything-to-API Demo
+  domains: [localhost]
+  aliases: [demo.local]
+  createdAt: 2026-09-08T00:00:00.000Z
+  updatedAt: 2026-09-08T00:00:00.000Z
+baseUrls:
+  default: http://localhost:4317
+auth:
+  required: true
+  provider: demo-session
+  requirements: [cookie, csrf_token]
+commands:
+  list_customers:
+    description: List or search customers
+    sideEffect: read
+    arguments:
+      search: { type: string, required: false, default: "" }
+    request:
+      kind: http
+      method: GET
+      url: /api/customers
+      query: { search: "{{args.search}}", page: 1 }
+    output: { type: json }
+    pagination: { cursorPath: next, cursorQuery: page, itemsPath: items, maxPages: 20 }
+    validation: { status: verified, confidence: 1 }
+  create_customer:
+    description: Create a customer
+    sideEffect: write
+    arguments:
+      name: { type: string, required: true }
+    request:
+      kind: http
+      method: POST
+      url: /api/customers
+      headers: { x-csrf-token: "{{auth.csrf_token}}" }
+      body: { name: "{{args.name}}" }
+    output: { type: json }
+    validation: { status: verified, confidence: 1 }
+  get_invoice:
+    description: Retrieve invoice metadata
+    sideEffect: read
+    arguments:
+      invoice_id: { type: string, required: true }
+    request: { kind: http, method: GET, url: "/api/invoices/{{args.invoice_id}}" }
+    output: { type: json }
+    validation: { status: verified, confidence: 1 }
+  download_invoice:
+    description: Download an invoice PDF
+    sideEffect: read
+    arguments:
+      invoice_id: { type: string, required: true }
+    request: { kind: http, method: GET, url: "/api/invoices/{{args.invoice_id}}/download" }
+    output: { type: file, filename: "invoice-{{args.invoice_id}}.pdf" }
+    validation: { status: verified, confidence: 1 }
+discovery:
+  sourceUrl: http://localhost:4317
+  learnedAt: 2026-09-08T00:00:00.000Z
+  agent: anything-to-api skill
+  notes: Deterministic fixture for runtime and discovery testing.

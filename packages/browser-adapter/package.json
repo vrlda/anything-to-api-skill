@@ -1,0 +1,14 @@
+{
+  "name": "@anything-to-api/browser-adapter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean --external @anything-to-api/runtime --external @anything-to-api/schema" },
+  "dependencies": {
+    "@anything-to-api/runtime": "workspace:*",
+    "@anything-to-api/schema": "workspace:*",
+    "playwright": "^1.63.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@anything-to-api/schema": ["packages/schema/src/index.ts"],
+      "@anything-to-api/runtime": ["packages/runtime/src/index.ts"],
+      "@anything-to-api/browser-adapter": ["packages/browser-adapter/src/index.ts"],
+      "@anything-to-api/discovery": ["packages/discovery/src/index.ts"],
+      "@anything-to-api/exporters": ["packages/exporters/src/index.ts"],
+      "@anything-to-api/auth-adapters": ["packages/auth-adapters/src/index.ts"],
+      "@anything-to-api/repair": ["packages/repair/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts", "examples/**/*.ts"]
+}

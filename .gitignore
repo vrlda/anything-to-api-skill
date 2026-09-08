@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.anything-to-api/
+.next/
+.wrangler/
+next-env.d.ts

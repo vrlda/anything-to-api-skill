@@ -1,0 +1,17 @@
+{
+  "name": "@anything-to-api/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": { "anything": "./dist/index.js" },
+  "scripts": { "build": "tsup src/index.ts --format esm --clean --external @anything-to-api/runtime --external @anything-to-api/schema --external @anything-to-api/discovery --external @anything-to-api/browser-adapter --external @anything-to-api/auth-adapters --external @anything-to-api/exporters --external @anything-to-api/mcp" },
+  "dependencies": {
+    "@anything-to-api/runtime": "workspace:*",
+    "@anything-to-api/schema": "workspace:*",
+    "@anything-to-api/discovery": "workspace:*",
+    "@anything-to-api/browser-adapter": "workspace:*",
+    "@anything-to-api/auth-adapters": "workspace:*",
+    "@anything-to-api/exporters": "workspace:*",
+    "@anything-to-api/mcp": "workspace:*",
+    "commander": "^14.0.0"
+  }
+}

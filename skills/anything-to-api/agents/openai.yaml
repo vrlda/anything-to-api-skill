@@ -1,0 +1,4 @@
+interface:
+  display_name: Anything-to-API
+  short_description: Learn and reuse website APIs
+  default_prompt: Learn reusable commands for this website and save a validated site spec.
