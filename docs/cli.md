@@ -1,4 +1,6 @@
-# CLI
+# Internal runtime CLI
+
+This interface supports agent execution, maintainers, and generated applications. It is not primary user workflow. Installed agents invoke equivalent operations through `skills/anything-to-api/scripts/runtime.sh`; users should speak to their agent instead.
 
 Set `ANYTHING_SITES` to colon-separated registry roots or pass `--registry`. Default registry is `~/.anything-to-api/sites`.
 

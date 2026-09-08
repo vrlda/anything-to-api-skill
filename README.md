@@ -1,80 +1,63 @@
 # Anything-to-API
 
-Anything-to-API is a local API compiler for websites. An agent learns meaningful site actions once, records the reusable requests in a validated site spec, and later executes them directly through a small TypeScript runtime. Browser automation remains a discovery and repair mechanism, plus a fallback for irreducibly browser-bound actions.
+Anything-to-API teaches AI agents to learn websites once and reuse them as APIs.
+
+Tell your agent to learn a site. It explores relevant UI flows, observes network traffic, identifies reusable operations, validates them, and saves a structured local definition. Later requests use learned operations directly instead of navigating the website again.
 
 ## Install
 
-Requires Node.js 20+, Git, and macOS or Linux:
+Requires Node.js 20+, Git, and macOS or Linux. One line:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vrlda/anything-to-api-skill/main/install.sh | bash
 ```
 
-Installer builds runtime, installs Playwright Chromium, links `anything` into `~/.local/bin`, and registers portable skill in `~/.agents/skills` plus Codex when present. Override locations with `ANYTHING_INSTALL_DIR`, `ANYTHING_BIN_DIR`, or `ANYTHING_SKILLS_DIR`.
+Or tell a capable coding agent:
 
-Then teach a site:
+> Install the Anything-to-API skill from https://github.com/vrlda/anything-to-api-skill
 
-```bash
-anything discover https://example.com
-anything commands example.com
-```
+Installer registers one portable [Agent Skill](https://agentskills.io/specification) in standard shared location and compatibility locations for Claude Code, Codex, and OpenCode. Runtime and browser dependencies remain internal to skill.
 
-## MVP contents
+## Use
 
-- `packages/schema`: canonical YAML/JSON spec and Zod validator
-- `packages/runtime`: registry, templating, auth providers, HTTP execution, prerequisites, pagination, retries, extraction, and files
-- `packages/browser-adapter`: Playwright capture, session reuse, and structured UI fallback
-- `packages/discovery`: `/api` capture and candidate inference for REST, forms, and GraphQL
-- `packages/auth-adapters`: non-secret profiles and OS keychain-backed secrets
-- `packages/repair`: guarded atomic repair-and-retry orchestration
-- `packages/exporters`: OpenAPI and typed TypeScript SDK generation
-- `packages/mcp`: MCP adapter over learned commands
-- `packages/cli`: `anything` command
-- `skills/anything-to-api`: portable `/api <url>` discovery skill
-- `examples/demo-site`: deterministic session, pagination, CSRF, JSON, and file target
-- `examples/sites/demo.local.yaml`: learned demo definition
+Talk to agent—no Anything-to-API commands needed.
 
-## Quick start
+> `/api https://example.com`
 
-```bash
-pnpm install
-pnpm demo
-```
+> Learn how to list and download invoices from Example.
 
-In another terminal:
+> Download all my Example invoices from 2026.
 
-```bash
-ANYTHING_SITES=examples/sites pnpm anything sites
-ANYTHING_SITES=examples/sites pnpm anything commands demo.local
-```
+> What actions have you learned for Example?
 
-Learn a site in a visible browser. Explore representative flows and press Enter when done:
+> The saved Example integration stopped working. Repair it and retry.
 
-```bash
-pnpm anything discover https://example.com
-pnpm anything commands example.com
-pnpm anything call example.com list_invoices --arg year=2026
-pnpm anything export-openapi example.com example.openapi.json
-pnpm anything export-sdk example.com example-sdk.ts
-pnpm anything mcp example.com
-```
+Agent discovers site on first request, asks before consequential actions, and reuses saved definition afterward.
 
-Discovery stores specs under `~/.anything-to-api/sites` and Playwright session state separately under `~/.anything-to-api/sessions`, both with user-only permissions. Candidate commands remain `unverified` until agent review and direct replay.
+## Agent compatibility
 
-The demo spec expects auth provider `demo-session`; programmatic use shows how to supply it:
+- Any client implementing Agent Skills `SKILL.md` standard through `~/.agents/skills`
+- Claude Code through `~/.claude/skills`
+- OpenCode through `~/.config/opencode/skills` and shared compatibility paths
+- Codex through `~/.codex/skills`
 
-```ts
-import { Anything, StaticAuthProvider } from "@anything-to-api/runtime";
+Skill contains no Codex-specific workflow. Vendor metadata is optional and ignored by other agents.
 
-const anything = new Anything({
-  paths: ["./anything/sites"],
-  authProviders: [new StaticAuthProvider("demo-session", {
-    headers: { cookie: "demo_session=valid" },
-    values: { csrf_token: "demo-csrf" },
-  })],
-});
+## What agent gets
 
-const invoices = await anything.call("example.com", "list_invoices", { year: 2026 });
-```
+- Browser/network discovery and reusable REST, GraphQL, form, multipart, WebSocket, and download operations
+- Structured, validated YAML/JSON site definitions
+- Browser-session, environment, callback, profile, and OS-keychain authentication
+- Pagination, prerequisites, refresh flows, retries, response validation, and file output
+- Safe browser fallback where direct requests cannot work
+- Incremental learning and guarded self-repair
+- MCP, OpenAPI, and TypeScript SDK adapters for generated applications
+- Secret redaction and side-effect authorization policy
 
-See [architecture](docs/architecture.md), [site spec](docs/site-spec.md), [discovery](docs/discovery.md), [CLI](docs/cli.md), [auth profiles](docs/auth-profiles.md), and [security](docs/security.md).
+Definitions live in `~/.anything-to-api/sites`; session material stays separate in `~/.anything-to-api/sessions`. Secrets never belong in site specs.
+
+## Maintainers and SDK authors
+
+Architecture and internals: [architecture](docs/architecture.md), [site specification](docs/site-spec.md), [discovery](docs/discovery.md), [authentication](docs/auth-profiles.md), [security](docs/security.md), and [contributing](CONTRIBUTING.md).
+
+MIT licensed.

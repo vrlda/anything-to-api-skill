@@ -5,7 +5,7 @@ import type { ArgumentSpec } from "@anything-to-api/schema";
 import type { Anything } from "@anything-to-api/runtime";
 
 export async function createSiteMcpServer(anything: Anything, site: string): Promise<McpServer> {
-  const server = new McpServer({ name: `anything-to-api:${site}`, version: "1.0.1" });
+  const server = new McpServer({ name: `anything-to-api:${site}`, version: "1.1.0" });
   const commands = await anything.commands(site);
   for (const [name, command] of Object.entries(commands)) {
     const shape = Object.fromEntries(Object.entries(command.arguments).map(([argument, definition]) => [argument, argumentToZod(definition)]));
