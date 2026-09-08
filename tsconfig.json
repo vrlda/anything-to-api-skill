@@ -16,7 +16,8 @@
       "@anything-to-api/discovery": ["packages/discovery/src/index.ts"],
       "@anything-to-api/exporters": ["packages/exporters/src/index.ts"],
       "@anything-to-api/auth-adapters": ["packages/auth-adapters/src/index.ts"],
-      "@anything-to-api/repair": ["packages/repair/src/index.ts"]
+      "@anything-to-api/repair": ["packages/repair/src/index.ts"],
+      "@anything-to-api/mcp": ["packages/mcp/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "examples/**/*.ts"]
