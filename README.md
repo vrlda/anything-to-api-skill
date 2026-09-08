@@ -1,8 +1,8 @@
 # Anything-to-API
 
-Anything-to-API teaches AI agents to learn websites once and reuse them as APIs.
+Anything-to-API turns websites into reusable APIs for AI agents and programs.
 
-Tell your agent to learn a site. It explores relevant UI flows, observes network traffic, identifies reusable operations, validates them, and saves a structured local definition. Later requests use learned operations directly instead of navigating the website again.
+An agent explores the UI, observes the underlying requests, validates reusable operations, and saves them locally. Future tasks call those operations directly instead of automating the site again.
 
 ## Install
 
