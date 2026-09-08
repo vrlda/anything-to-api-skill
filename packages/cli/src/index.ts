@@ -12,7 +12,7 @@ import { toOpenApi, toTypeScriptSdk } from "@anything-to-api/exporters";
 import { serveSiteOverStdio } from "@anything-to-api/mcp";
 import { BrowserSessionDirectoryAuthProvider } from "@anything-to-api/browser-adapter";
 
-const program = new Command().name("anything").description("Execute learned website APIs").version("1.1.0");
+const program = new Command().name("anything").description("Execute learned website APIs").version("1.1.1");
 program.option("--registry <path>", "site registry path; repeat for multiple", (value, previous: string[]) => [...previous, value], []);
 program.option("--profile <path>", "non-secret auth profile JSON");
 
